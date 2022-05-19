@@ -463,6 +463,7 @@ func (p *Provisioner) setupAdapter(ui packersdk.Ui, comm packersdk.Communicator)
 
 const DefaultSSHInventoryFilev2 = "{{ .HostAlias }} ansible_host={{ .Host }} ansible_user={{ .User }} ansible_port={{ .Port }}\n"
 const DefaultSSHInventoryFilev1 = "{{ .HostAlias }} ansible_ssh_host={{ .Host }} ansible_ssh_user={{ .User }} ansible_ssh_port={{ .Port }}\n"
+const DefaultChrootInventoryFile = "{{ .HostAlias }} ansible_host={{ .Chroot }} ansible_connection=chroot\n"
 const DefaultWinRMInventoryFilev2 = "{{ .HostAlias}} ansible_host={{ .Host }} ansible_connection=winrm ansible_winrm_transport=basic ansible_shell_type=powershell ansible_user={{ .User}} ansible_port={{ .Port }}\n"
 
 func (p *Provisioner) createInventoryFile() error {
@@ -480,8 +481,13 @@ func (p *Provisioner) createInventoryFile() error {
 		if p.ansibleMajVersion < 2 {
 			hostTemplate = DefaultSSHInventoryFilev1
 		}
-		if p.config.UseProxy.False() && p.generatedData["ConnType"] == "winrm" {
-			hostTemplate = DefaultWinRMInventoryFilev2
+		if p.config.UseProxy.False() {
+			switch p.generatedData["ConnType"] {
+			case "chroot":
+				hostTemplate = DefaultChrootInventoryFile
+			case "winrm":
+				hostTemplate = DefaultWinRMInventoryFilev2
+			}
 		}
 	}
 
@@ -545,21 +551,31 @@ func (p *Provisioner) Provision(ctx context.Context, ui packersdk.Ui, comm packe
 		p.config.ExtraArguments[i] = arg
 	}
 
-	// Set up proxy if host IP is missing or communicator type is wrong.
-	if p.config.UseProxy.False() {
-		hostIP := generatedData["Host"].(string)
-		if hostIP == "" {
-			ui.Error("Warning: use_proxy is false, but instance does" +
-				" not have an IP address to give to Ansible. Falling back" +
-				" to use localhost proxy.")
-			p.config.UseProxy = config.TriTrue
+	connType := generatedData["ConnType"].(string)
+
+	if connType == "chroot" {
+		// Disable proxy if communicator is chroot.
+		if p.config.UseProxy.True() {
+			ui.Error("Warning: use_proxy is true, but communicator is chroot, " +
+				"so proxy is redundant and it's disabled.")
 		}
-		connType := generatedData["ConnType"]
-		if connType != "ssh" && connType != "winrm" {
-			ui.Error("Warning: use_proxy is false, but communicator is " +
-				"neither ssh nor winrm, so without the proxy ansible will not" +
-				" function. Falling back to localhost proxy.")
-			p.config.UseProxy = config.TriTrue
+		p.config.UseProxy = config.TriFalse
+	} else {
+		// Set up proxy if host IP is missing or communicator type is wrong.
+		if p.config.UseProxy.False() {
+			hostIP := generatedData["Host"].(string)
+			if hostIP == "" {
+				ui.Error("Warning: use_proxy is false, but communicator is not chroot, nor" +
+					" instance has an IP address to give to Ansible. Falling back" +
+					" to use localhost proxy.")
+				p.config.UseProxy = config.TriTrue
+			}
+			if connType != "ssh" && connType != "winrm" {
+				ui.Error("Warning: use_proxy is false, but communicator is " +
+					"not one of ssh, winrm or chroot, so without the proxy ansible will not" +
+					" function. Falling back to localhost proxy.")
+				p.config.UseProxy = config.TriTrue
+			}
 		}
 	}
 
@@ -587,7 +603,6 @@ func (p *Provisioner) Provision(ctx context.Context, ui packersdk.Ui, comm packe
 			defer os.Remove(privKeyFile)
 		}
 	} else {
-		connType := generatedData["ConnType"].(string)
 		switch connType {
 		case "ssh":
 			ui.Message("Not using Proxy adapter for Ansible run:\n" +

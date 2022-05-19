@@ -382,6 +382,11 @@ default ansible_ssh_host=123.45.67.89 ansible_ssh_user=testuser ansible_ssh_port
 			}),
 			Expected: "default ansible_host=123.45.67.89 ansible_connection=winrm ansible_winrm_transport=basic ansible_shell_type=powershell ansible_user=testuser ansible_port=1234\n",
 		},
+		{
+			UseProxy:      confighelper.TriFalse,
+			GeneratedData: chrootGenData(),
+			Expected:      "default ansible_host=/qwe ansible_connection=chroot\n",
+		},
 	}
 
 	for _, tc := range TestCases {
@@ -438,6 +443,13 @@ func basicGenData(input map[string]interface{}) map[string]interface{} {
 		gd[k] = v
 	}
 	return gd
+}
+
+func chrootGenData() map[string]interface{} {
+	return map[string]interface{}{
+		"ConnType": "chroot",
+		"Chroot":   "/qwe",
+	}
 }
 
 func TestCreateCmdArgs(t *testing.T) {
@@ -706,6 +718,24 @@ func TestUseProxy(t *testing.T) {
 				"ConnType": "winrm",
 			}),
 			expectedSetupAdapterCalled: true,
+		},
+		{
+			explanation:                "use_proxy is unset and connType is chroot. we should not set up the adapter.",
+			UseProxy:                   confighelper.TriUnset,
+			generatedData:              chrootGenData(),
+			expectedSetupAdapterCalled: false,
+		},
+		{
+			explanation:                "use_proxy is true and connType is chroot. we should not set up the adapter.",
+			UseProxy:                   confighelper.TriTrue,
+			generatedData:              chrootGenData(),
+			expectedSetupAdapterCalled: false,
+		},
+		{
+			explanation:                "use_proxy is false and connType is chroot. we should not set up the adapter.",
+			UseProxy:                   confighelper.TriFalse,
+			generatedData:              chrootGenData(),
+			expectedSetupAdapterCalled: false,
 		},
 	}
 
